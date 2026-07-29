@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Movie Library</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎬 Mi Biblioteca de Películas</h1>
+    <button id="scanBtn">Escanear carpeta</button>
+  </header>
+
+  <main id="grid" class="grid"></main>
+
+  <div id="player" class="player hidden">
+    <video id="videoEl" controls></video>
+    <button id="closePlayer">Cerrar</button>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

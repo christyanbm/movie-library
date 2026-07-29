@@ -1,0 +1,7 @@
+# Local build and dependency artifacts
+node_modules/
+src-tauri/target/
+
+# Large external binaries bundled locally for development
+ffmpeg-master-latest-win64-gpl-shared/
+ffmpeg-master-latest-win64-gpl-shared.zip
