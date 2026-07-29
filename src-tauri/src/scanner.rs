@@ -5,11 +5,10 @@ use walkdir::WalkDir;
 
 const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mkv", "avi", "mov", "wmv", "m4v"];
 
-/// Recorre una carpeta recursivamente y devuelve un Movie "crudo" por cada video encontrado
 pub fn scan_folder(folder: &str) -> Vec<Movie> {
     let mut movies = Vec::new();
 
-    for entry in WalkDir::new(folder).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(folder).follow_links(true).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -50,44 +49,38 @@ fn build_movie_from_path(path: &Path) -> Option<Movie> {
     })
 }
 
-/// Extrae título y año de nombres tipo:
-/// "Interstellar.2014.1080p.BluRay.x264-GROUP.mkv" -> ("Interstellar", Some(2014))
 fn parse_title_year(file_name: &str) -> (String, Option<i32>) {
     let stem = Path::new(file_name)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(file_name);
 
-    // separadores comunes: puntos, guiones bajos
     let normalized = stem.replace('.', " ").replace('_', " ");
-
-    // buscar un año de 4 dígitos (19xx / 20xx)
     let words: Vec<&str> = normalized.split_whitespace().collect();
-    let mut year: Option<i32> = None;
-    let mut cut_index = words.len();
 
-    for (i, w) in words.iter().enumerate() {
+    let mut year: Option<i32> = None;
+    let mut cut_index: Option<usize> = None;
+
+    for (i, w) in words.iter().enumerate().rev() {
         if w.len() == 4 {
             if let Ok(y) = w.parse::<i32>() {
                 if (1900..=2100).contains(&y) {
                     year = Some(y);
-                    cut_index = i;
+                    cut_index = Some(i);
                     break;
                 }
             }
         }
     }
 
-    let title = if cut_index > 0 {
-        words[..cut_index].join(" ")
-    } else {
-        normalized.clone()
+    let title = match cut_index {
+        Some(idx) if idx > 0 => words[..idx].join(" "),
+        _ => normalized.clone(),
     };
 
     (title.trim().to_string(), year)
 }
 
-/// Llama a ffprobe (debe estar instalado en el sistema) y extrae duración/resolución/codec
 fn probe_video(path: &Path) -> (Option<i32>, Option<String>, Option<String>) {
     let output = Command::new("ffprobe")
         .args([
@@ -101,16 +94,22 @@ fn probe_video(path: &Path) -> (Option<i32>, Option<String>, Option<String>) {
 
     let output = match output {
         Ok(o) => o,
-        Err(_) => return (None, None, None), // ffprobe no instalado o falló
+        Err(_) => {
+            eprintln!("ADVERTENCIA: ffprobe no encontrado. Instala ffmpeg/ffprobe para obtener metadatos de video.");
+            return (None, None, None);
+        }
     };
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
+    let parsed: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return (None, None, None),
+    };
 
     let duration = parsed["format"]["duration"]
         .as_str()
         .and_then(|d| d.parse::<f64>().ok())
-        .map(|d| d as i32);
+        .map(|d| d.round() as i32);
 
     let (width, height, codec) = if let Some(stream) = parsed["streams"].get(0) {
         (

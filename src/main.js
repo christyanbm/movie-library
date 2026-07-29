@@ -8,9 +8,15 @@ const player = document.getElementById("player");
 const videoEl = document.getElementById("videoEl");
 const closePlayer = document.getElementById("closePlayer");
 
+let progressInterval = null;
+let currentMoviePath = null;
+
 async function loadMovies() {
   const movies = await invoke("get_movies");
   renderGrid(movies);
+  invoke("fetch_missing_metadata").then(count => {
+    if (count > 0) loadMovies();
+  });
 }
 
 function renderGrid(movies) {
@@ -18,47 +24,66 @@ function renderGrid(movies) {
   for (const movie of movies) {
     const card = document.createElement("div");
     card.className = "card";
-    card.innerHTML = `
-      <div class="poster" style="background-image: url('${movie.poster_url || ""}')">
-        ${movie.watched ? '<span class="badge">✔ Vista</span>' : ""}
-      </div>
-      <div class="info">
-        <h3>${movie.title}</h3>
-        <p>${movie.year ?? ""} · ${movie.resolution ?? "?"}</p>
-      </div>
-    `;
+
+    const poster = document.createElement("div");
+    poster.className = "poster";
+    if (movie.poster_url) {
+      poster.style.backgroundImage = `url('${movie.poster_url}')`;
+    }
+    if (movie.watched) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "\u2714 Vista";
+      poster.appendChild(badge);
+    }
+
+    const info = document.createElement("div");
+    info.className = "info";
+
+    const title = document.createElement("h3");
+    title.textContent = movie.title;
+
+    const detail = document.createElement("p");
+    detail.textContent = `${movie.year ?? ""} \u00B7 ${movie.resolution ?? "?"}`;
+
+    info.appendChild(title);
+    info.appendChild(detail);
+    card.appendChild(poster);
+    card.appendChild(info);
     card.addEventListener("click", () => playMovie(movie));
     grid.appendChild(card);
   }
 }
 
 function playMovie(movie) {
+  if (progressInterval) clearInterval(progressInterval);
+
   const src = convertFileSrc(movie.file_path);
   videoEl.src = src;
   videoEl.currentTime = movie.progress_seconds || 0;
+  currentMoviePath = movie.file_path;
   player.classList.remove("hidden");
   videoEl.play();
 
-  // guardar progreso cada 5 segundos
-  const interval = setInterval(() => {
+  progressInterval = setInterval(() => {
     invoke("save_progress", {
-      filePath: movie.file_path,
+      filePath: currentMoviePath,
       progress: Math.floor(videoEl.currentTime),
       watched: videoEl.currentTime / videoEl.duration > 0.9,
     });
   }, 5000);
-
-  videoEl.addEventListener("ended", () => clearInterval(interval), { once: true });
-  closePlayer.addEventListener(
-    "click",
-    () => {
-      clearInterval(interval);
-      videoEl.pause();
-      player.classList.add("hidden");
-    },
-    { once: true }
-  );
 }
+
+closePlayer.addEventListener("click", () => {
+  if (progressInterval) clearInterval(progressInterval);
+  videoEl.pause();
+  player.classList.add("hidden");
+});
+
+videoEl.addEventListener("ended", () => {
+  if (progressInterval) clearInterval(progressInterval);
+  player.classList.add("hidden");
+});
 
 scanBtn.addEventListener("click", async () => {
   const folder = await open({ directory: true, multiple: false });
@@ -67,8 +92,10 @@ scanBtn.addEventListener("click", async () => {
   scanBtn.textContent = "Escaneando...";
   const count = await invoke("scan_and_save", { folder });
   scanBtn.textContent = "Escanear carpeta";
-  alert(`Se agregaron ${count} películas nuevas`);
-  loadMovies();
+  alert(`Se agregaron ${count} pel\u00EDculas nuevas`);
+  await loadMovies();
+  const updated = await invoke("fetch_missing_metadata");
+  if (updated > 0) loadMovies();
 });
 
 loadMovies();

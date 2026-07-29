@@ -67,28 +67,36 @@ pub fn insert_movie(conn: &Connection, movie: &Movie) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
+pub fn get_movies_without_poster(conn: &Connection) -> Result<Vec<Movie>> {
+    let mut stmt = conn.prepare("SELECT * FROM movies WHERE poster_url IS NULL OR poster_url = '' ORDER BY title ASC")?;
+    let rows = stmt.query_map([], map_movie_row)?;
+    rows.collect()
+}
+
+fn map_movie_row(row: &rusqlite::Row) -> rusqlite::Result<Movie> {
+    Ok(Movie {
+        id: row.get(0)?,
+        file_path: row.get(1)?,
+        file_name: row.get(2)?,
+        title: row.get(3)?,
+        year: row.get(4)?,
+        duration_seconds: row.get(5)?,
+        resolution: row.get(6)?,
+        codec: row.get(7)?,
+        size_bytes: row.get(8)?,
+        tmdb_id: row.get(9)?,
+        overview: row.get(10)?,
+        poster_url: row.get(11)?,
+        rating: row.get(12)?,
+        genres: row.get(13)?,
+        watched: row.get::<_, i32>(14)? != 0,
+        progress_seconds: row.get(15)?,
+    })
+}
+
 pub fn get_all_movies(conn: &Connection) -> Result<Vec<Movie>> {
     let mut stmt = conn.prepare("SELECT * FROM movies ORDER BY title ASC")?;
-    let rows = stmt.query_map([], |row| {
-        Ok(Movie {
-            id: row.get(0)?,
-            file_path: row.get(1)?,
-            file_name: row.get(2)?,
-            title: row.get(3)?,
-            year: row.get(4)?,
-            duration_seconds: row.get(5)?,
-            resolution: row.get(6)?,
-            codec: row.get(7)?,
-            size_bytes: row.get(8)?,
-            tmdb_id: row.get(9)?,
-            overview: row.get(10)?,
-            poster_url: row.get(11)?,
-            rating: row.get(12)?,
-            genres: row.get(13)?,
-            watched: row.get::<_, i32>(14)? != 0,
-            progress_seconds: row.get(15)?,
-        })
-    })?;
+    let rows = stmt.query_map([], map_movie_row)?;
     rows.collect()
 }
 

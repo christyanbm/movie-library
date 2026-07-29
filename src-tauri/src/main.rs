@@ -5,7 +5,7 @@ mod tmdb;
 use db::Movie;
 use rusqlite::Connection;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 struct AppState {
     conn: Mutex<Connection>,
@@ -14,14 +14,16 @@ struct AppState {
 #[tauri::command]
 fn scan_and_save(folder: String, state: State<AppState>) -> Result<usize, String> {
     let movies = scanner::scan_folder(&folder);
-    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let mut conn = state.conn.lock().map_err(|e| e.to_string())?;
 
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut count = 0;
     for movie in &movies {
-        if db::insert_movie(&conn, movie).is_ok() {
+        if db::insert_movie(&tx, movie).is_ok() {
             count += 1;
         }
     }
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(count)
 }
 
@@ -53,25 +55,60 @@ async fn fetch_metadata(movie_id: i64, title: String, year: Option<i32>, state: 
             &result.overview,
             &poster_url,
             result.vote_average,
-            "", // los genre_ids necesitan otro llamado a /genre/movie/list para mapear nombres
+            "",
         )
         .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-fn main() {
-    let conn = Connection::open("movie_library.db").expect("No se pudo abrir la base de datos");
-    db::init_db(&conn).expect("No se pudo inicializar la base de datos");
+#[tauri::command]
+async fn fetch_missing_metadata(state: State<'_, AppState>) -> Result<usize, String> {
+    let movies = {
+        let conn = state.conn.lock().map_err(|e| e.to_string())?;
+        db::get_movies_without_poster(&conn).map_err(|e| e.to_string())?
+    };
 
+    let mut count = 0;
+    for movie in &movies {
+        if let Some(result) = tmdb::search_movie(&movie.title, movie.year).await {
+            let poster_url = result
+                .poster_path
+                .map(|p| tmdb::poster_full_url(&p))
+                .unwrap_or_default();
+
+            if let Some(id) = movie.id {
+                let conn = state.conn.lock().map_err(|e| e.to_string())?;
+                db::update_tmdb_metadata(
+                    &conn, id, result.id, &result.overview,
+                    &poster_url, result.vote_average, "",
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { conn: Mutex::new(conn) })
+        .setup(|app| {
+            let app_data = app.path().app_data_dir().expect("No se pudo obtener el directorio de datos");
+            std::fs::create_dir_all(&app_data).expect("No se pudo crear el directorio de datos");
+            let db_path = app_data.join("movie_library.db");
+            let conn = Connection::open(&db_path).expect("No se pudo abrir la base de datos");
+            db::init_db(&conn).expect("No se pudo inicializar la base de datos");
+            app.manage(AppState { conn: Mutex::new(conn) });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             scan_and_save,
             get_movies,
             save_progress,
-            fetch_metadata
+            fetch_metadata,
+            fetch_missing_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error corriendo la app de Tauri");
